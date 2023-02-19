@@ -55,13 +55,15 @@ func (e *RocketmqExporter) collect(ch chan<- prometheus.Metric) {
 					"topic":         topic,
 					"group":         group,
 					"brokerAddress": brokerAddress,
+					"error":         err,
 				})
-				return
 			}
 			e.CollectConsumerOffset(ch, topic, group, onlineConsumerConnection)
 
-			if _, ok := groupMap.Load(group); !ok {
-				groupMap.Store(group, onlineConsumerConnection)
+			if onlineConsumerConnection != nil {
+				if _, ok := groupMap.Load(group); !ok {
+					groupMap.Store(group, onlineConsumerConnection)
+				}
 			}
 
 		}
@@ -98,7 +100,9 @@ func (e *RocketmqExporter) collect(ch chan<- prometheus.Metric) {
 
 		onlineConsumerConnection, _ := groupMap.Load(group)
 
-		e.CollectOnlineConsumerMetric(ch, group, onlineConsumerConnection.(*admin.ConsumerConnection))
+		if onlineConsumerConnection != nil {
+			e.CollectOnlineConsumerMetric(ch, group, onlineConsumerConnection.(*admin.ConsumerConnection))
+		}
 	}
 
 	loopGroup := func(id int) {

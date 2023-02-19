@@ -2,13 +2,12 @@ package exporter
 
 import (
 	"context"
+	"github.com/apache/rocketmq-client-go/v2/primitive"
+	"github.com/rocketmq-exporter-go/admin"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/rocketmq-exporter-go/admin"
-
-	"github.com/apache/rocketmq-client-go/v2/primitive"
 	"github.com/apache/rocketmq-client-go/v2/rlog"
 	"github.com/prometheus/client_golang/prometheus"
 )
@@ -29,35 +28,32 @@ func (e *RocketmqExporter) CollectConsumerOffset(
 	var countOfOnlineConsumers = 0
 	var messageModel = admin.Clustering
 
-	if onlineConsumerConnection.MessageModel == "" {
+	if onlineConsumerConnection != nil {
 		messageModel = onlineConsumerConnection.MessageModel
+
+		if onlineConsumerConnection.Connections != nil {
+			countOfOnlineConsumers = len(onlineConsumerConnection.Connections)
+		}
 	}
 
-	if onlineConsumerConnection.Connections != nil {
-		countOfOnlineConsumers = len(onlineConsumerConnection.Connections)
-	}
+	var clientAddresses = make([]string, countOfOnlineConsumers)
+	var clientIds = make([]string, countOfOnlineConsumers)
 
 	if countOfOnlineConsumers > 0 {
-
-		var clientAddresses = make([]string, countOfOnlineConsumers)
-		var clientIds = make([]string, countOfOnlineConsumers)
-
 		for _, connection := range onlineConsumerConnection.Connections {
 			clientAddresses = append(clientAddresses, connection.ClientAddress)
 			clientIds = append(clientIds, connection.ClientId)
 		}
-
-		ch <- prometheus.MustNewConstMetric(
-			rocketmqGroupCount,
-			prometheus.GaugeValue,
-			float64(countOfOnlineConsumers),
-			strings.Join(clientAddresses, ","),
-			strings.Join(clientIds, ","),
-			topic,
-			group,
-		)
-
 	}
+	ch <- prometheus.MustNewConstMetric(
+		rocketmqGroupCount,
+		prometheus.GaugeValue,
+		float64(countOfOnlineConsumers),
+		strings.Join(clientAddresses, ","),
+		strings.Join(clientIds, ","),
+		topic,
+		group,
+	)
 
 	consumeStats, err := e.admin.ExamineConsumeStats(context.Background(), group, topic)
 
@@ -75,7 +71,7 @@ func (e *RocketmqExporter) CollectConsumerOffset(
 	for queue, offset := range consumeStats.OffsetTable {
 
 		var diff = offset.BrokerOffset - offset.ConsumerOffset
-		diffTotal = diff
+		diffTotal += diff
 
 		var brokerName = queue.BrokerName
 		if consumerOffset, ok := consumerOffsetMap[brokerName]; ok {
@@ -84,52 +80,54 @@ func (e *RocketmqExporter) CollectConsumerOffset(
 			consumerOffsetMap[brokerName] = offset.ConsumerOffset
 		}
 
-		var consumerLatency int64 = 0
+		if messageModel == admin.Clustering {
+			var consumerLatency int64 = 0
 
-		pullResult, err := e.consumer.PullFrom(context.Background(), queue, offset.ConsumerOffset, 1)
-		if err != nil {
-			rlog.Error("CollectConsumerOffset PullFrom", map[string]interface{}{
-				"queue":          queue,
-				"consumerOffset": offset.ConsumerOffset,
-				"err":            err,
-			})
-			return
-		}
-
-		// strange logic
-		if pullResult.Status == primitive.PullFound {
-			if diff != 0 {
-				consumerLatency = time.Now().UnixMilli() - pullResult.GetMessageExts()[0].StoreTimestamp
-			}
-		} else if pullResult.Status == primitive.PullOffsetIllegal {
-			pullResult, err = e.consumer.PullFrom(context.Background(), queue, pullResult.MinOffset, 1)
+			consumePullResult, err := e.consumer.PullFrom(context.Background(), queue, offset.ConsumerOffset, 1)
 			if err != nil {
-				rlog.Error("CollectConsumerOffset PullFrom ", map[string]interface{}{
+				rlog.Error("CollectConsumerOffset PullFrom", map[string]interface{}{
 					"queue":          queue,
-					"consumerOffset": pullResult.MinOffset,
+					"consumerOffset": offset.ConsumerOffset,
 					"err":            err,
 				})
-				return
 			}
 
-			consumerLatency = time.Now().UnixMilli() - pullResult.GetMessageExts()[0].StoreTimestamp
-		} else if pullResult.Status == primitive.PullBrokerTimeout {
-			rlog.Error("CollectConsumerOffset PullFrom ", map[string]interface{}{
-				"queue":          queue,
-				"consumerOffset": pullResult.MinOffset,
-				"err":            "PullBrokerTimeout",
-			})
-			continue
-		}
+			if consumePullResult != nil {
+				if consumePullResult.Status == primitive.PullFound {
+					if diff != 0 {
+						consumerLatency = time.Now().UnixMilli() - consumePullResult.GetMessageExts()[0].StoreTimestamp
+					}
+				} else if consumePullResult.Status == primitive.PullOffsetIllegal {
+					pullResult, err := e.consumer.PullFrom(context.Background(), queue, consumePullResult.MinOffset, 1)
+					if err != nil {
+						rlog.Error("CollectConsumerOffset PullFrom ", map[string]interface{}{
+							"queue":          queue,
+							"consumerOffset": pullResult.MinOffset,
+							"err":            err,
+						})
+					}
+					if pullResult != nil && pullResult.Status == primitive.PullFound {
+						consumerLatency = time.Now().UnixMilli() - pullResult.GetMessageExts()[0].StoreTimestamp
+					}
 
-		if latency, ok := consumerLatencyMap[brokerName]; ok {
-			if consumerLatency > latency {
-				consumerLatencyMap[brokerName] = consumerLatency
+				} else if consumePullResult.Status == primitive.PullBrokerTimeout {
+					rlog.Error("CollectConsumerOffset PullFrom ", map[string]interface{}{
+						"queue":          queue,
+						"consumerOffset": consumePullResult.MinOffset,
+						"err":            "PullBrokerTimeout",
+					})
+					continue
+				}
+
+				if latency, ok := consumerLatencyMap[brokerName]; ok {
+					if consumerLatency > latency {
+						consumerLatencyMap[brokerName] = consumerLatency
+					}
+				} else {
+					consumerLatencyMap[brokerName] = consumerLatency
+				}
 			}
-		} else {
-			consumerLatencyMap[brokerName] = consumerLatency
 		}
-
 	}
 
 	if messageModel == admin.Clustering {
@@ -182,11 +180,11 @@ func (e *RocketmqExporter) CollectConsumerOffset(
 	}
 
 	// get consumer latency
-	for brokerName, lactency := range consumerLatencyMap {
+	for brokerName, latency := range consumerLatencyMap {
 		ch <- prometheus.MustNewConstMetric(
 			rocketmqGroupGetLatencyByStoreTime,
 			prometheus.GaugeValue,
-			float64(lactency),
+			float64(latency),
 			e.GetClusterByBroker(brokerName),
 			brokerName,
 			topic,
