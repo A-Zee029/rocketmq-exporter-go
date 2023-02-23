@@ -44,7 +44,7 @@ func (e *RocketmqExporter) collectForChans(quit chan struct{}) {
 	// Lock to avoid modification on the channel slice
 	e.signMutex.Lock()
 
-	// all collection task will be return the same result mestric once collection period
+	// all collection task will be return the same result metric once collection period
 	for _, ch := range e.collectChans {
 		for _, metric := range container {
 			ch <- metric

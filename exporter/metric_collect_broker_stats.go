@@ -31,7 +31,7 @@ func (e *RocketmqExporter) CollectBrokerStats(ch chan<- prometheus.Metric, broke
 		ch <- prometheus.MustNewConstMetric(
 			rocketmqBrokerTps,
 			prometheus.GaugeValue,
-			float64(topicPuNumBrokerStats.StatsMinute.Sum),
+			topicPuNumBrokerStats.StatsMinute.Tps,
 			broker.Cluster,
 			broker.BrokerName,
 			brokerAddress,
