@@ -51,7 +51,6 @@ func (e *RocketmqExporter) CollectConsumerOffset(
 		float64(countOfOnlineConsumers),
 		strings.Join(clientAddresses, ","),
 		strings.Join(clientIds, ","),
-		topic,
 		group,
 	)
 

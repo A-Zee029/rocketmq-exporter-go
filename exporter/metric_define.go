@@ -71,8 +71,8 @@ var (
 	rocketmqBrokeRuntimePutTps600                             *prometheus.Desc
 	rocketmqBrokeRuntimePutTps60                              *prometheus.Desc
 	rocketmqBrokeRuntimePutTps10                              *prometheus.Desc
-	rocketmqBrokeRuntimePutLatency99                        *prometheus.Desc
-	rocketmqBrokeRuntimePutLatency999                            *prometheus.Desc
+	rocketmqBrokeRuntimePutLatency99                          *prometheus.Desc
+	rocketmqBrokeRuntimePutLatency999                         *prometheus.Desc
 	rocketmqBrokeRuntimeDispatchMaxBuffer                     *prometheus.Desc
 	rocketmqBrokeRuntimePullThreadPoolQueueCapacity           *prometheus.Desc
 	rocketmqBrokeRuntimeSendThreadPoolQueueCapacity           *prometheus.Desc
@@ -95,7 +95,7 @@ var (
 func InitMetricDesc() {
 
 	var groupDiffLabelNames = []string{"group", "topic", "countOfOnlineConsumers", "msgModel"}
-	var groupCountLabelNames = []string{"caddr", "localaddr", "topic", "group"}
+	var groupCountLabelNames = []string{"caddr", "localaddr", "group"}
 	var topicOffsetLabelNames = []string{"cluster", "broker", "topic", "lastUpdateTimestamp"}
 	var dlqTopicOffsetLabelNames = []string{"cluster", "broker", "group", "lastUpdateTimestamp"}
 	var groupClientMetricLabelNames = []string{"group", "topic", "clientAddr", "clientId"}

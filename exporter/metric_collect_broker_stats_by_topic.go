@@ -2,6 +2,7 @@ package exporter
 
 import (
 	"context"
+	"strings"
 
 	"github.com/apache/rocketmq-client-go/v2/rlog"
 	"github.com/prometheus/client_golang/prometheus"
@@ -17,6 +18,57 @@ const (
 
 func (e *RocketmqExporter) CollectBrokerStatsByTopic(ch chan<- prometheus.Metric, topic string) {
 
+	if strings.HasPrefix(topic, DlqGroupTopicPrefix) || strings.HasPrefix(topic, RetryGroupTopicPrefix) {
+		return
+	}
+
+	for _, broker := range e.getRouteInfoByTopic(topic).BrokerDataList {
+
+		var brokerAddress = broker.SelectBrokerAddr()
+
+		topicPuNumBrokerStats, err := e.admin.QueryBrokerStats(context.Background(), TopicPutNums, topic, brokerAddress)
+
+		if err != nil {
+			rlog.Error("CollectBrokerStatsByTopic QueryBrokerStats ", map[string]interface{}{
+				"statsName": TopicPutNums,
+				"statsKey":  topic,
+				"broker":    broker.BrokerName,
+				"err":       err,
+			})
+		}
+		if topicPuNumBrokerStats != nil {
+			ch <- prometheus.MustNewConstMetric(
+				rocketmqProducerTps,
+				prometheus.GaugeValue,
+				topicPuNumBrokerStats.StatsMinute.Tps,
+				broker.Cluster,
+				broker.BrokerName,
+				topic,
+			)
+		}
+
+		topicPutSizeBrokerStats, err := e.admin.QueryBrokerStats(context.Background(), TopicPutSize, topic, brokerAddress)
+		if err != nil {
+			rlog.Error("CollectBrokerStatsByTopic QueryBrokerStats ", map[string]interface{}{
+				"statsName": TopicPutSize,
+				"statsKey":  topic,
+				"broker":    broker.BrokerName,
+				"err":       err,
+			})
+		}
+		if topicPutSizeBrokerStats != nil {
+			ch <- prometheus.MustNewConstMetric(
+				rocketmqProducerMessageSize,
+				prometheus.GaugeValue,
+				topicPutSizeBrokerStats.StatsMinute.Tps,
+				broker.Cluster,
+				broker.BrokerName,
+				topic,
+			)
+		}
+
+	}
+
 	groups, err := e.admin.ExamineTopicConsumeByWho(context.Background(), topic)
 
 	if err != nil {
@@ -27,93 +79,78 @@ func (e *RocketmqExporter) CollectBrokerStatsByTopic(ch chan<- prometheus.Metric
 		return
 	}
 
-	for _, broker := range e.getRouteInfoByTopic(topic).BrokerDataList {
+	for _, group := range groups {
 
-		var brokerAddress = broker.SelectBrokerAddr()
+		for _, broker := range e.getRouteInfoByTopic(topic).BrokerDataList {
+			var brokerAddress = broker.SelectBrokerAddr()
+			if brokerAddress != "" {
+				var statsKey = topic + "@" + group
 
-		topicPuNumBrokerStats, err := e.admin.QueryBrokerStats(context.Background(), TopicPutNums, topic, brokerAddress)
-		if err != nil {
-			// glog.Errorf("CollectBrokerStatsByTopic QueryBrokerStats statsName:%s, statsKey:%s, broker:%s ", TopicPutNums, topic, broker.BrokerName, err)
-			continue
-		}
+				groupGetNumBrokerStats, err := e.admin.QueryBrokerStats(context.Background(), GroupGetNums, statsKey, brokerAddress)
+				if err != nil {
+					rlog.Error("CollectBrokerStatsByTopic QueryBrokerStats ", map[string]interface{}{
+						"statsName": GroupGetNums,
+						"statsKey":  statsKey,
+						"broker":    broker.BrokerName,
+						"err":       err,
+					})
+				}
 
-		ch <- prometheus.MustNewConstMetric(
-			rocketmqProducerTps,
-			prometheus.GaugeValue,
-			float64(topicPuNumBrokerStats.StatsMinute.Tps),
-			broker.Cluster,
-			broker.BrokerName,
-			topic,
-		)
+				if groupGetNumBrokerStats != nil {
+					ch <- prometheus.MustNewConstMetric(
+						rocketmqConsumerTps,
+						prometheus.GaugeValue,
+						groupGetNumBrokerStats.StatsMinute.Tps,
+						broker.Cluster,
+						broker.BrokerName,
+						topic,
+						group,
+					)
+				}
 
-		topicPutSizeBrokerStats, err := e.admin.QueryBrokerStats(context.Background(), TopicPutSize, topic, brokerAddress)
-		if err != nil {
-			// glog.Errorf("CollectBrokerStatsByTopic QueryBrokerStats statsName:%s, statsKey:%s, broker:%s ", TopicPutSize, topic, broker.BrokerName, err)
-			continue
-		}
+				groupGetSizeBrokerStats, err := e.admin.QueryBrokerStats(context.Background(), GroupGetSize, statsKey, brokerAddress)
+				if err != nil {
+					rlog.Error("CollectBrokerStatsByTopic QueryBrokerStats ", map[string]interface{}{
+						"statsName": GroupGetSize,
+						"statsKey":  statsKey,
+						"broker":    broker.BrokerName,
+						"err":       err,
+					})
+				}
+				if groupGetSizeBrokerStats != nil {
+					ch <- prometheus.MustNewConstMetric(
+						rocketmqConsumerMessageSize,
+						prometheus.GaugeValue,
+						groupGetSizeBrokerStats.StatsMinute.Tps,
+						broker.Cluster,
+						broker.BrokerName,
+						topic,
+						group,
+					)
+				}
 
-		ch <- prometheus.MustNewConstMetric(
-			rocketmqProducerMessageSize,
-			prometheus.GaugeValue,
-			float64(topicPutSizeBrokerStats.StatsMinute.Tps),
-			broker.Cluster,
-			broker.BrokerName,
-			topic,
-		)
-
-		for _, group := range groups {
-			var statsKey = topic + "@" + group
-
-			groupGetNumBrokerStats, err := e.admin.QueryBrokerStats(context.Background(), GroupGetNums, statsKey, brokerAddress)
-			if err != nil {
-				// glog.Errorf("CollectBrokerStatsByTopic QueryBrokerStats statsName:%s, statsKey:%s, broker:%s ", GroupGetNums, statsKey, broker.BrokerName, err)
-				continue
+				sendbackPutNumsBrokerStats, err := e.admin.QueryBrokerStats(context.Background(), SendbackPutNums, statsKey, brokerAddress)
+				if err != nil {
+					rlog.Error("CollectBrokerStatsByTopic QueryBrokerStats ", map[string]interface{}{
+						"statsName": SendbackPutNums,
+						"statsKey":  statsKey,
+						"broker":    broker.BrokerName,
+						"err":       err,
+					})
+				}
+				if sendbackPutNumsBrokerStats != nil {
+					ch <- prometheus.MustNewConstMetric(
+						rocketmqSendBackNums,
+						prometheus.GaugeValue,
+						float64(sendbackPutNumsBrokerStats.StatsMinute.Sum),
+						broker.Cluster,
+						broker.BrokerName,
+						topic,
+						group,
+					)
+				}
 			}
-
-			ch <- prometheus.MustNewConstMetric(
-				rocketmqConsumerTps,
-				prometheus.GaugeValue,
-				float64(groupGetNumBrokerStats.StatsMinute.Tps),
-				broker.Cluster,
-				broker.BrokerName,
-				topic,
-				group,
-			)
-
-			groupGetSizeBrokerStats, err := e.admin.QueryBrokerStats(context.Background(), GroupGetSize, statsKey, brokerAddress)
-			if err != nil {
-				// glog.Errorf("CollectBrokerStatsByTopic QueryBrokerStats statsName:%s, statsKey:%s, broker:%s ", GroupGetSize, statsKey, broker.BrokerName, err)
-				continue
-			}
-
-			ch <- prometheus.MustNewConstMetric(
-				rocketmqConsumerMessageSize,
-				prometheus.GaugeValue,
-				float64(groupGetSizeBrokerStats.StatsMinute.Tps),
-				broker.Cluster,
-				broker.BrokerName,
-				topic,
-				group,
-			)
-
-			sendbackPutNumsBrokerStats, err := e.admin.QueryBrokerStats(context.Background(), SendbackPutNums, statsKey, brokerAddress)
-			if err != nil {
-				// glog.Errorf("CollectBrokerStatsByTopic QueryBrokerStats statsName:%s, statsKey:%s, broker:%s ", SendbackPutNums, statsKey, broker.BrokerName, err)
-				continue
-			}
-
-			ch <- prometheus.MustNewConstMetric(
-				rocketmqSendBackNums,
-				prometheus.GaugeValue,
-				float64(sendbackPutNumsBrokerStats.StatsMinute.Sum),
-				broker.Cluster,
-				broker.BrokerName,
-				topic,
-				group,
-			)
-
 		}
 
 	}
-
 }
