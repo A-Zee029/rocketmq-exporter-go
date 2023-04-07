@@ -95,7 +95,7 @@ var (
 func InitMetricDesc() {
 
 	var groupDiffLabelNames = []string{"group", "topic", "countOfOnlineConsumers", "msgModel"}
-	var groupCountLabelNames = []string{"caddr", "localaddr", "group"}
+	var groupCountLabelNames = []string{"caddr", "localaddr", "topic", "group"}
 	var topicOffsetLabelNames = []string{"cluster", "broker", "topic", "lastUpdateTimestamp"}
 	var dlqTopicOffsetLabelNames = []string{"cluster", "broker", "group", "lastUpdateTimestamp"}
 	var groupClientMetricLabelNames = []string{"group", "topic", "clientAddr", "clientId"}
